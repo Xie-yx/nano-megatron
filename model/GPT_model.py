@@ -11,10 +11,11 @@ class GPTConfig:
     num_layers: int = 12
     hidden_size: int = 768
     ffn_hidden_size: int = 3072
-    num_heads: int = 12
+    num_attention_heads: int = 12
     vocab_size: int = 50257
     max_seq_len: int = 1024
     dropout: float = 0.1
+    embedding_dropout: float = 0.1
     attention_dropout: float = 0.1
     residual_dropout: float = 0.1
     use_bias: bool = True
@@ -29,7 +30,7 @@ class GPT(nn.Module):
         self.config = config
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embedding = nn.Embedding(config.max_seq_len, config.hidden_size)
-        self.dropout = nn.Dropout(config.dropout)
+        self.embedding_dropout = nn.Dropout(config.embedding_dropout)
         self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.num_layers)])
         self.ln_f = nn.LayerNorm(config.hidden_size, eps=config.layernorm_epsilon)
         
@@ -46,7 +47,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
     
-    def forward(self, input_ids, labels=None):
+    def forward(self, input_ids):
         device = input_ids.device
         b, t = input_ids.size()
         assert t <= self.config.max_seq_len, "输入序列长度超过模型的最大序列长度"
@@ -55,19 +56,13 @@ class GPT(nn.Module):
         token_emb = self.token_embedding(input_ids) # (b, t, hidden_size)
         pos_emb = self.position_embedding(pos) # (t, hidden_size)
         
-        x = self.dropout(token_emb + pos_emb)
+        x = self.embedding_dropout(token_emb + pos_emb)
         for block in self.blocks:
             x = block(x)        
         x = self.ln_f(x)
 
-        
         logits = self.lm_head(x) # (b, t, vocab_size)
-        if labels is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-100)
-        else:
-            loss = None
-            
-        return logits, loss
+        return logits
         
         
 
@@ -90,19 +85,19 @@ class CausalSelfAttention(nn.Module):
     
     def __init__(self, config):
         super().__init__()
-        assert config.hidden_size % config.num_heads == 0, "hidden_size 必须是 num_heads 的整数倍"
-        self.num_heads = config.num_heads
+        assert config.hidden_size % config.num_attention_heads == 0, "hidden_size 必须是 num_attention_heads 的整数倍"
+        self.num_attention_heads = config.num_attention_heads
         self.hidden_size = config.hidden_size
         
-        self.query = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
-        self.key = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
-        self.value = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
+        self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
+        self.k_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
+        self.v_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
         
 
         self.register_buffer("causal_mask", torch.tril(torch.ones(config.max_seq_len, config.max_seq_len))
                              .view(1, 1, config.max_seq_len, config.max_seq_len))
         
-        self.proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
+        self.out_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=config.use_bias)
         
         self.attn_dropout = nn.Dropout(config.attention_dropout)
         self.resid_dropout = nn.Dropout(config.residual_dropout)
@@ -111,21 +106,21 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, hidden size
         
-        q = self.query(x)
-        k = self.key(x)
-        v = self.value(x)
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
         
-        k = k.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2) # (B, num_heads, T, head_size)
-        q = q.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2) # (B, num_heads, T, head_size)
-        v = v.view(B, T, self.num_heads, C // self.num_heads).transpose(1, 2) # (B, num_heads, T, head_size)
+        k = k.view(B, T, self.num_attention_heads, C // self.num_attention_heads).transpose(1, 2) # (B, num_attention_heads, T, head_size)
+        q = q.view(B, T, self.num_attention_heads, C // self.num_attention_heads).transpose(1, 2) # (B, num_attention_heads, T, head_size)
+        v = v.view(B, T, self.num_attention_heads, C // self.num_attention_heads).transpose(1, 2) # (B, num_attention_heads, T, head_size)
         
-        attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (B, num_heads, T, T)
+        attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (B, num_attention_heads, T, T)
         attn = attn.masked_fill(self.causal_mask[:, :, :T, :T] == 0, float("-inf"))
-        attn = F.softmax(attn, dim=-1) # (B, num_heads, T, T)
+        attn = F.softmax(attn, dim=-1) # (B, num_attention_heads, T, T)
         attn = self.attn_dropout(attn)
-        y = attn @ v # (B, num_heads, T, head_size)
+        y = attn @ v # (B, num_attention_heads, T, head_size)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
-        y = self.resid_dropout(self.proj(y))
+        y = self.resid_dropout(self.out_proj(y))
         return y
 
 
