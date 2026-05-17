@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from data.tokenizer import GPT2_TOKENIZER_SPEC
 from model.GPT_model import GPT, GPTConfig
-from train.checkpoint import save_checkpoint
+from train.checkpoint import load_checkpoint, save_checkpoint
 
 
 @dataclass
@@ -27,6 +27,7 @@ class TrainConfig:
     data_dir: str
     out_dir: str = "out"
     csv_log_name: str = "loss_log.csv"
+    resume: str | None = None
     batch_size: int = 8
     max_steps: int = 200
     eval_interval: int = 50
@@ -45,6 +46,7 @@ def parse_args() -> tuple[TrainConfig, GPTConfig]:
     parser.add_argument("--data-dir", default="data/shakespeare", help="Directory containing train.bin and val.bin")
     parser.add_argument("--out-dir", default="out", help="Directory used to save checkpoints and logs")
     parser.add_argument("--csv-log-name", default="loss_log.csv", help="CSV filename for training logs")
+    parser.add_argument("--resume", default=None, help="Path to a checkpoint to resume training from")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size per training step")
     parser.add_argument("--max-steps", type=int, default=200, help="Number of training steps")
     parser.add_argument("--eval-interval", type=int, default=50, help="Evaluation interval in steps")
@@ -79,6 +81,7 @@ def parse_args() -> tuple[TrainConfig, GPTConfig]:
         data_dir=args.data_dir,
         out_dir=args.out_dir,
         csv_log_name=args.csv_log_name,
+        resume=args.resume,
         batch_size=args.batch_size,
         max_steps=args.max_steps,
         eval_interval=args.eval_interval,
@@ -244,21 +247,45 @@ def main() -> None:
     if train_tokens.shape[0] < model_config.max_seq_len + 2 or val_tokens.shape[0] < model_config.max_seq_len + 2:
         raise ValueError("train.bin or val.bin is too short for the configured max_seq_len.")
 
-    model = GPT(model_config).to(train_config.device)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=train_config.learning_rate,
-        weight_decay=train_config.weight_decay,
-    )
+    if train_config.resume is not None:
+        resume_path = Path(train_config.resume)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
+        model, checkpoint = load_checkpoint(resume_path, device=train_config.device)
+        model_config = model.config
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=train_config.learning_rate,
+            weight_decay=train_config.weight_decay,
+        )
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_step = int(checkpoint["step"])
+    else:
+        model = GPT(model_config).to(train_config.device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=train_config.learning_rate,
+            weight_decay=train_config.weight_decay,
+        )
+        start_step = 0
+
+    if train_config.max_steps <= start_step:
+        raise ValueError(
+            f"max_steps ({train_config.max_steps}) must be greater than resume step ({start_step})."
+        )
 
     print(f"device: {train_config.device}")
     print(f"tokenizer: {GPT2_TOKENIZER_SPEC.name}")
     print(f"vocab size: {model_config.vocab_size}")
     print(f"train tokens: {train_tokens.shape[0]}, val tokens: {val_tokens.shape[0]}")
     print(f"csv log: {csv_path}")
+    if train_config.resume is not None:
+        print(f"resuming from: {train_config.resume}")
+        print(f"resume step: {start_step}")
 
     model.train()
-    for step in range(1, train_config.max_steps + 1):
+    for step in range(start_step + 1, train_config.max_steps + 1):
         start_time = time.time()
         input_ids, labels = get_batch(
             train_tokens,

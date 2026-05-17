@@ -204,17 +204,16 @@ PY
 
 ## 6. Resume Verification
 
-Current code already supports loading checkpoint utilities in `train/checkpoint.py`.  
-Before wiring full CLI resume training, you can verify resume behavior with generation plus checkpoint inspection.
+Current code supports resuming training from a saved checkpoint through `--resume`.
 
-Recommended manual resume validation procedure:
+Recommended validation procedure:
 
-1. run training for some steps
+1. run an initial short training job
 2. confirm checkpoint exists
-3. run generation from that checkpoint
-4. inspect checkpoint metadata
+3. resume from an intermediate checkpoint
+4. verify new checkpoints and logs continue from the saved step
 
-Example:
+### Step 1: initial run
 
 ```bash
 python -u sctipts/train_single_gpu.py \
@@ -232,11 +231,42 @@ python -u sctipts/train_single_gpu.py \
   --num-attention-heads 4
 ```
 
-Then verify the checkpoint:
+This should create:
+
+- `out/resume_test/checkpoint_step_000060.pt`
+- `out/resume_test/checkpoint_step_000120.pt`
+
+### Step 2: resume from step 60 and continue to step 180
+
+```bash
+python -u sctipts/train_single_gpu.py \
+  --data-dir data/shakespeare \
+  --device cuda \
+  --out-dir out/resume_test \
+  --resume out/resume_test/checkpoint_step_000060.pt \
+  --batch-size 8 \
+  --max-steps 180 \
+  --eval-interval 40 \
+  --save-interval 60 \
+  --max-seq-len 128 \
+  --num-layers 4 \
+  --hidden-size 256 \
+  --ffn-hidden-size 1024 \
+  --num-attention-heads 4
+```
+
+Expected behavior:
+
+- script prints `resuming from: ...`
+- script prints `resume step: 60`
+- training continues from step `61`
+- new checkpoint `checkpoint_step_000180.pt` is produced
+
+### Step 3: verify the resumed checkpoint can generate
 
 ```bash
 python inference/generate.py \
-  --checkpoint out/resume_test/checkpoint_step_000060.pt \
+  --checkpoint out/resume_test/checkpoint_step_000180.pt \
   --prompt "The king" \
   --max-new-tokens 60 \
   --temperature 1.0 \
@@ -244,13 +274,15 @@ python inference/generate.py \
   --device cuda
 ```
 
-Inspect metadata:
+### Step 4: inspect checkpoint metadata
 
 ```bash
 python - <<'PY'
 import torch
-ckpt = torch.load("out/resume_test/checkpoint_step_000060.pt", map_location="cpu")
+ckpt = torch.load("out/resume_test/checkpoint_step_000180.pt", map_location="cpu")
 print("resume step:", ckpt["step"])
+print("tokenizer_name:", ckpt.get("tokenizer_name"))
+print("token_dtype:", ckpt.get("token_dtype"))
 PY
 ```
 
@@ -279,4 +311,3 @@ After the single-GPU flow is fully validated on Linux server, the next step is:
   - `ColumnParallelLinear`
   - `RowParallelLinear`
   - TP correctness tests
-
