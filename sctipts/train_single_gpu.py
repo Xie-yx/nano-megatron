@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import random
 import sys
 import time
@@ -23,6 +24,7 @@ from model.GPT_model import GPT, GPTConfig
 class TrainConfig:
 	data_dir: str
 	out_dir: str = "out"
+	csv_log_name: str = "loss_log.csv"
 	batch_size: int = 8
 	max_steps: int = 200
 	eval_interval: int = 50
@@ -40,6 +42,7 @@ def parse_args() -> tuple[TrainConfig, GPTConfig]:
 	parser = argparse.ArgumentParser(description="Minimal single-GPU GPT trainer")
 	parser.add_argument("--data-dir", default="data/shakespeare", help="包含 train.bin 和 val.bin 的目录")
 	parser.add_argument("--out-dir", default="out", help="checkpoint 输出目录")
+	parser.add_argument("--csv-log-name", default="loss_log.csv", help="训练日志 CSV 文件名，保存在 out-dir 下")
 	parser.add_argument("--batch-size", type=int, default=8, help="每步 batch size")
 	parser.add_argument("--max-steps", type=int, default=200, help="训练步数")
 	parser.add_argument("--eval-interval", type=int, default=50, help="评估间隔")
@@ -68,6 +71,7 @@ def parse_args() -> tuple[TrainConfig, GPTConfig]:
 	train_config = TrainConfig(
 		data_dir=args.data_dir,
 		out_dir=args.out_dir,
+		csv_log_name=args.csv_log_name,
 		batch_size=args.batch_size,
 		max_steps=args.max_steps,
 		eval_interval=args.eval_interval,
@@ -115,6 +119,62 @@ def load_token_files(data_dir: str) -> tuple[np.memmap, np.memmap]:
 	if train_tokens.size == 0 or val_tokens.size == 0:
 		raise ValueError("train.bin 或 val.bin 为空，无法训练。")
 	return train_tokens, val_tokens
+
+
+def init_csv_logger(csv_path: Path) -> None:
+	csv_path.parent.mkdir(parents=True, exist_ok=True)
+	if csv_path.exists():
+		return
+	with csv_path.open("w", newline="", encoding="utf-8") as file:
+		writer = csv.DictWriter(
+			file,
+			fieldnames=[
+				"event",
+				"step",
+				"train_loss",
+				"eval_train_loss",
+				"eval_val_loss",
+				"learning_rate",
+				"step_time_ms",
+			],
+		)
+		writer.writeheader()
+
+
+def append_csv_log(
+	csv_path: Path,
+	event: str,
+	step: int,
+	learning_rate: float,
+	train_loss: float | None = None,
+	eval_train_loss: float | None = None,
+	eval_val_loss: float | None = None,
+	step_time_ms: float | None = None,
+) -> None:
+	with csv_path.open("a", newline="", encoding="utf-8") as file:
+		writer = csv.DictWriter(
+			file,
+			fieldnames=[
+				"event",
+				"step",
+				"train_loss",
+				"eval_train_loss",
+				"eval_val_loss",
+				"learning_rate",
+				"step_time_ms",
+			],
+		)
+		writer.writerow(
+			{
+				"event": event,
+				"step": step,
+				"train_loss": "" if train_loss is None else f"{train_loss:.8f}",
+				"eval_train_loss": "" if eval_train_loss is None else f"{eval_train_loss:.8f}",
+				"eval_val_loss": "" if eval_val_loss is None else f"{eval_val_loss:.8f}",
+				"learning_rate": f"{learning_rate:.8e}",
+				"step_time_ms": "" if step_time_ms is None else f"{step_time_ms:.4f}",
+			}
+		)
 
 
 def get_batch(token_ids: np.memmap, batch_size: int, block_size: int, device: str) -> tuple[torch.Tensor, torch.Tensor]:
@@ -188,6 +248,10 @@ def save_checkpoint(
 def main() -> None:
 	train_config, model_config = parse_args()
 	set_seed(train_config.seed)
+	out_dir = Path(train_config.out_dir)
+	out_dir.mkdir(parents=True, exist_ok=True)
+	csv_path = out_dir / train_config.csv_log_name
+	init_csv_logger(csv_path)
 
 	train_tokens, val_tokens = load_token_files(train_config.data_dir)
 	if train_tokens.shape[0] < model_config.max_seq_len + 2 or val_tokens.shape[0] < model_config.max_seq_len + 2:
@@ -204,6 +268,7 @@ def main() -> None:
 	print("tokenizer: gpt2")
 	print(f"vocab size: {model_config.vocab_size}")
 	print(f"train tokens: {train_tokens.shape[0]}, val tokens: {val_tokens.shape[0]}")
+	print(f"csv log: {csv_path}")
 
 	model.train()
 	for step in range(1, train_config.max_steps + 1):
@@ -222,15 +287,32 @@ def main() -> None:
 		if train_config.grad_clip > 0:
 			torch.nn.utils.clip_grad_norm_(model.parameters(), train_config.grad_clip)
 		optimizer.step()
+		learning_rate = optimizer.param_groups[0]["lr"]
+		elapsed_ms = (time.time() - start_time) * 1000
 
 		if step % train_config.log_interval == 0 or step == 1:
-			elapsed_ms = (time.time() - start_time) * 1000
 			print(f"step {step:06d} | train loss {loss.item():.4f} | step time {elapsed_ms:.2f} ms")
+			append_csv_log(
+				csv_path,
+				event="train",
+				step=step,
+				train_loss=loss.item(),
+				learning_rate=learning_rate,
+				step_time_ms=elapsed_ms,
+			)
 
 		if train_config.eval_interval > 0 and step % train_config.eval_interval == 0:
 			losses = estimate_loss(model, train_tokens, val_tokens, train_config, model_config)
 			print(
 				f"step {step:06d} | eval train loss {losses['train']:.4f} | eval val loss {losses['val']:.4f}"
+			)
+			append_csv_log(
+				csv_path,
+				event="eval",
+				step=step,
+				eval_train_loss=losses["train"],
+				eval_val_loss=losses["val"],
+				learning_rate=learning_rate,
 			)
 
 		if train_config.save_interval > 0 and step % train_config.save_interval == 0:

@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.pyo
+model/__pycache__/
 
 # Virtual environments
 .venv/
@@ -12,6 +13,7 @@ env/
 .vscode/
 
 # Training outputs
+out_csv_test/
 out/
 *.log
 
@@ -26,3 +28,4 @@ out/
 # Python tooling caches
 .pytest_cache/
 .mypy_cache/
+
