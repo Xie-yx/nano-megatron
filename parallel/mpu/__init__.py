@@ -13,6 +13,10 @@ from .mpu_initialize import model_parallel_is_initialized
 from .layers import ColumnParallelLinear
 from .layers import RowParallelLinear
 from .layers import VocabParallelEmbedding
+from .mappings import copy_to_tp_region
+from .mappings import gather_from_tp_region
+from .mappings import reduce_from_tp_region
+from .mappings import scatter_to_tp_region
 from .utils import divide
 from .random import get_cuda_rng_tracker
 from .random import model_parallel_cuda_manual_seed
