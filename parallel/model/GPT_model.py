@@ -47,18 +47,6 @@ class ParallelGPT(nn.Module):
             parallel_output
         )
 
-        if labels is not None:
-            if parallel_output:
-                raise NotImplementedError(
-                    "Loss computation with partitioned logits is not implemented yet. "
-                    "Set parallel_output=False or compute loss outside the model."
-                )
-            loss = F.cross_entropy(
-                output.view(-1, output.size(-1)),
-                labels.view(-1),
-            )
-            return loss
-        
         return output
         
         

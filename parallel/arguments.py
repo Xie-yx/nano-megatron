@@ -99,6 +99,12 @@ def _add_model_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 	group.add_argument("--max-seq-len", type=int, default=128, help="Maximum sequence length")
 	group.add_argument("--init-method-std", type=float, default=0.02, help="Std used by Megatron-style normal initialization")
 	group.add_argument(
+		"--hidden-dropout",
+		type=float,
+		default=None,
+		help="Megatron-style hidden dropout. Defaults to residual-dropout when omitted.",
+	)
+	group.add_argument(
 		"--params-dtype",
 		type=str,
 		default="fp32",
@@ -185,7 +191,8 @@ def _postprocess_args(args) -> None:
 	args.params_dtype = _resolve_params_dtype(args.params_dtype)
 	args.padded_vocab_size = _round_up_to_multiple(args.vocab_size, args.tensor_model_parallel_size)
 	args.max_position_embeddings = args.max_seq_len
-	args.hidden_dropout = args.embedding_dropout
+	if args.hidden_dropout is None:
+		args.hidden_dropout = args.residual_dropout
 	args.seq_length = args.max_seq_len
 
 
