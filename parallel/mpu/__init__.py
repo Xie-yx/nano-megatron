@@ -10,6 +10,10 @@ from .mpu_initialize import get_tp_rank
 from .mpu_initialize import get_tp_world_size
 from .mpu_initialize import initialize_model_parallel
 from .mpu_initialize import model_parallel_is_initialized
+from .layers import ColumnParallelLinear
+from .layers import RowParallelLinear
+from .layers import VocabParallelEmbedding
+from .utils import divide
 from .random import get_cuda_rng_tracker
 from .random import model_parallel_cuda_manual_seed
 
