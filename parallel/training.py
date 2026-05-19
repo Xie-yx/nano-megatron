@@ -32,10 +32,20 @@ def pretrain(
     train()
     
     
+    
+    
 
 
 def setup_model_and_optimizer(model_provider):
-    pass
+    args = get_args()
+    model = get_model(model_provider)
+
+
+
+
+def get_model(model_provider):
+    
+
 
 
 

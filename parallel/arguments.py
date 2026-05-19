@@ -97,6 +97,13 @@ def _add_model_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 	group.add_argument("--num-attention-heads", type=int, default=4, help="Number of attention heads")
 	group.add_argument("--vocab-size", type=int, default=DEFAULT_VOCAB_SIZE, help="Vocabulary size")
 	group.add_argument("--max-seq-len", type=int, default=128, help="Maximum sequence length")
+	group.add_argument(
+		"--params-dtype",
+		type=str,
+		default="fp32",
+		choices=("fp32", "fp16", "bf16"),
+		help="Parameter storage dtype for parallel model weights.",
+	)
 	group.add_argument("--embedding-dropout", type=float, default=0.1, help="Embedding dropout")
 	group.add_argument("--attention-dropout", type=float, default=0.1, help="Attention dropout")
 	group.add_argument("--residual-dropout", type=float, default=0.1, help="Residual dropout")
@@ -174,6 +181,8 @@ def _postprocess_args(args) -> None:
 		else:
 			args.device = "cpu"
 
+	args.params_dtype = _resolve_params_dtype(args.params_dtype)
+
 
 def _validate_args(args) -> None:
 	if args.rank < 0:
@@ -218,6 +227,16 @@ def _resolve_world_size(world_size: int | None) -> int:
 	if world_size is not None:
 		return world_size
 	return int(os.getenv("WORLD_SIZE", "1"))
+
+
+def _resolve_params_dtype(name: str) -> torch.dtype:
+	if name == "fp32":
+		return torch.float32
+	if name == "fp16":
+		return torch.float16
+	if name == "bf16":
+		return torch.bfloat16
+	raise ValueError(f"Unsupported params dtype: {name}")
 
 
 
