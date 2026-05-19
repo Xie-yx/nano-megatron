@@ -13,3 +13,6 @@ from .mpu_initialize import model_parallel_is_initialized
 from .random import get_cuda_rng_tracker
 from .random import model_parallel_cuda_manual_seed
 
+from .layers import ColumnParallelLinear
+from .layers import RowParallelLinear
+from .layers import VocabParallelEmbedding

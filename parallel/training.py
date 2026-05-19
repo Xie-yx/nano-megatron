@@ -44,7 +44,10 @@ def setup_model_and_optimizer(model_provider):
 
 
 def get_model(model_provider):
-    
+    model = model_provider(
+        pre_process = True,
+        post_process = True,
+    )
 
 
 

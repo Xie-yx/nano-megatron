@@ -212,6 +212,6 @@ class VocabParallelEmbedding(torch.nn.Module):
         
         
     def forward(self, input_):
-        
+        pass
         
         
