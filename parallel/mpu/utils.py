@@ -70,3 +70,19 @@ class VocabUtility:
         return VocabUtility.vocab_range_from_per_partition_vocab_size(
             per_partition_vocab_size, rank, world_size
         )
+
+
+def init_method_normal(sigma):
+    def init_(tensor):
+        return torch.nn.init.normal_(tensor, mean=0.0, std=sigma)
+
+    return init_
+
+
+def scaled_init_method_normal(sigma, num_layers):
+    std = sigma / (2.0 * num_layers) ** 0.5
+
+    def init_(tensor):
+        return torch.nn.init.normal_(tensor, mean=0.0, std=std)
+
+    return init_

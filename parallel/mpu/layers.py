@@ -7,7 +7,7 @@ from torch.nn.parameter import Parameter
 from parallel.global_vars import get_args
 
 from .mpu_initialize import get_tp_rank, get_tp_world_size
-from .utils import divide
+from .utils import VocabUtility, divide
 from .mappings import copy_to_tp_region, gather_from_tp_region, reduce_from_tp_region, scatter_to_tp_region
 
 
@@ -208,10 +208,77 @@ class VocabParallelEmbedding(torch.nn.Module):
         
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
+        self.padding_idx = None
+        self.max_norm = None
+        self.norm_type = 2.0
+        self.scale_grad_by_freq = False
+        self.sparse = False
         
+        self.rank = get_tp_rank()
+        self.world_size = get_tp_world_size()
+        
+        (
+            self.vocab_start_index,
+            self.vocab_end_index,
+        ) = VocabUtility.vocab_range_from_global_vocab_size(
+            self.num_embeddings,
+            self.rank,
+            self.world_size, 
+        )
+        
+        self.num_embeddings_per_partition = (
+            self.vocab_end_index - self.vocab_start_index
+        )
+        
+        args = get_args()
+        self.weight = Parameter(
+            torch.empty(
+                self.num_embeddings_per_partition,
+                self.embedding_dim,
+                dtype=args.params_dtype,
+            )
+        )
+        
+        _initialize_affine_weight(
+            self.weight,
+            self.num_embeddings,
+            self.embedding_dim,
+            self.num_embeddings_per_partition,
+            partition_dim=0,
+            init_method=init_method,
+        )
         
         
     def forward(self, input_):
-        pass
+        # [B, T]
+        if(self.world_size > 1):
+            input_mask = (
+                (input_ < self.vocab_start_index) | (input_ >= self.vocab_end_index)
+            )
+            masked_input = input_.clone() - self.vocab_start_index
+            masked_input[input_mask] = 0
+        else:
+            masked_input = input_
+            
+        
+        # [B, T, H]
+        output_parallel = F.embedding(
+            masked_input,
+            self.weight,
+            self.padding_idx,
+            self.max_norm,
+            self.norm_type,
+            self.scale_grad_by_freq,
+            self.sparse,
+        )
+        
+        if self.world_size > 1:
+            output_parallel[input_mask, :] = 0.0
+            
+        output = reduce_from_tp_region(output_parallel)
+        return output
+            
+        
+        
         
         

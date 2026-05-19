@@ -97,6 +97,7 @@ def _add_model_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 	group.add_argument("--num-attention-heads", type=int, default=4, help="Number of attention heads")
 	group.add_argument("--vocab-size", type=int, default=DEFAULT_VOCAB_SIZE, help="Vocabulary size")
 	group.add_argument("--max-seq-len", type=int, default=128, help="Maximum sequence length")
+	group.add_argument("--init-method-std", type=float, default=0.02, help="Std used by Megatron-style normal initialization")
 	group.add_argument(
 		"--params-dtype",
 		type=str,
@@ -182,6 +183,10 @@ def _postprocess_args(args) -> None:
 			args.device = "cpu"
 
 	args.params_dtype = _resolve_params_dtype(args.params_dtype)
+	args.padded_vocab_size = _round_up_to_multiple(args.vocab_size, args.tensor_model_parallel_size)
+	args.max_position_embeddings = args.max_seq_len
+	args.hidden_dropout = args.embedding_dropout
+	args.seq_length = args.max_seq_len
 
 
 def _validate_args(args) -> None:
@@ -237,6 +242,12 @@ def _resolve_params_dtype(name: str) -> torch.dtype:
 	if name == "bf16":
 		return torch.bfloat16
 	raise ValueError(f"Unsupported params dtype: {name}")
+
+
+def _round_up_to_multiple(value: int, multiple: int) -> int:
+	if multiple <= 0:
+		raise ValueError(f"multiple must be positive, got {multiple}.")
+	return ((value + multiple - 1) // multiple) * multiple
 
 
 
