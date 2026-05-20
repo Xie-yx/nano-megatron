@@ -16,6 +16,15 @@ _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS = {
     "partition_dim": -1,
 }
 
+def set_defaults_if_not_set_tensor_model_parallel_attributes(tensor):
+    def maybe_set(attribute, value):
+        if not hasattr(tensor, attribute):
+            setattr(tensor, attribute, value)
+
+    for attribute in _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS:
+        maybe_set(attribute, _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS[attribute])
+
+
 def set_tensor_model_parallel_attributes(tensor, is_parallel, dim):
     # Make sure the attributes are not set.
     for attribute in _MODEL_PARALLEL_ATTRIBUTE_DEFAULTS:
