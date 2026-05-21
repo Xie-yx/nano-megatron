@@ -68,21 +68,23 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         loss = torch.log(sum_exp_logits) - predicted_logits
 
         # Store softmax, target-mask and masked-target for backward pass.
-        exp_logits.div_(sum_exp_logits.unsqueeze(dim=-1))
+        exp_logits.div_(sum_exp_logits.unsqueeze(dim=-1)) # softmax 后的概率 p
         ctx.save_for_backward(exp_logits, target_mask, masked_target_1d)
 
         return loss
 
     @staticmethod
     def backward(ctx, grad_output):
-
+        
+        # d(loss) / d(logits) = p_i - y_i
+        
         # Retreive tensors from the forward path.
-        softmax, target_mask, masked_target_1d = ctx.saved_tensors
+        exp_logits, target_mask, masked_target_1d = ctx.saved_tensors
 
         # All the inputs have softmax as their gradient.
-        grad_input = softmax
+        grad_input = exp_logits
         # For simplicity, work with the 2D gradient.
-        partition_vocab_size = softmax.size()[-1]
+        partition_vocab_size = exp_logits.size()[-1]
         grad_2d = grad_input.view(-1, partition_vocab_size)
 
         # Add the gradient from matching classes.
@@ -91,6 +93,7 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
 
         # Finally elementwise multiplication with the output gradients.
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
+        # grad_input = [d(loss) / d(logits)] * grad_output 链式法则
 
         return grad_input, None
 
