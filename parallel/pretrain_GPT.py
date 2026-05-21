@@ -1,9 +1,7 @@
-import numpy as np
 import torch
 
 from parallel.global_vars import get_args
 from parallel.model.GPT_model import ParallelGPT
-from parallel import mpu
 from parallel.training import pretrain
 
 
@@ -22,39 +20,11 @@ def _build_causal_mask(batch_size, seq_length, device):
     )
 
 
-def _build_data_parallel_generator():
-    args = get_args()
-    generator = torch.Generator(device="cpu")
-    iteration = getattr(args, "iteration", 0)
-    seed = args.seed + iteration * args.data_parallel_size + mpu.get_dp_rank()
-    generator.manual_seed(seed)
-    return generator
-
-
 def get_batch(data_iterator):
     args = get_args()
-    tokens = next(data_iterator)
-    if tokens is None:
+    samples = next(data_iterator)
+    if samples is None:
         raise RuntimeError("data_iterator returned None.")
-
-    seq_length = args.seq_length
-    sample_length = seq_length + 1
-    if len(tokens) < sample_length:
-        raise ValueError(
-            f"Dataset is too short for seq_length={seq_length}: got {len(tokens)} tokens."
-        )
-
-    starts = torch.randint(
-        0,
-        len(tokens) - sample_length + 1,
-        (args.micro_batch_size,),
-        generator=_build_data_parallel_generator(),
-    )
-    samples = [
-        torch.from_numpy(np.asarray(tokens[start : start + sample_length], dtype=np.int64))
-        for start in starts.tolist()
-    ]
-    samples = torch.stack(samples, dim=0)
 
     device = torch.device(args.device)
     samples = samples.to(device=device, dtype=torch.long, non_blocking=True)

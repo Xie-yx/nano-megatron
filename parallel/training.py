@@ -4,6 +4,9 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+from torch.utils.data.distributed import DistributedSampler
 try:
     from tqdm import tqdm
 except ImportError:
@@ -14,6 +17,7 @@ from .initialize import initialize_megatron
 from .global_vars import get_args
 
 from . import mpu
+from .data.dataset import TokenBlockDataset
 
 
 
@@ -164,15 +168,25 @@ def get_lr_scheduler(optimizer):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
-class _TokenDataIterator:
-    def __init__(self, tokens):
-        self.tokens = tokens
+class _CyclicDataIterator:
+    def __init__(self, dataloader, sampler=None):
+        self.dataloader = dataloader
+        self.sampler = sampler
+        self.epoch = 0
+        self.iterator = iter(dataloader)
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        return self.tokens
+        try:
+            return next(self.iterator)
+        except StopIteration:
+            self.epoch += 1
+            if self.sampler is not None:
+                self.sampler.set_epoch(self.epoch)
+            self.iterator = iter(self.dataloader)
+            return next(self.iterator)
 
 
 def _resolve_token_dtype():
@@ -188,6 +202,39 @@ def _resolve_token_dtype():
     if token_dtype in (np.int32, "int32"):
         return np.int32
     raise ValueError(f"Unsupported token dtype: {token_dtype}")
+
+
+def _as_token_block_dataset(data):
+    args = get_args()
+    if data is None:
+        return None
+    if isinstance(data, Dataset):
+        return data
+    return TokenBlockDataset(data, args.seq_length)
+
+
+def _build_data_iterator(dataset, shuffle=True):
+    if dataset is None:
+        return None
+
+    args = get_args()
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=mpu.get_dp_world_size(),
+        rank=mpu.get_dp_rank(),
+        shuffle=shuffle,
+        seed=args.seed,
+        drop_last=True,
+    )
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.micro_batch_size,
+        sampler=sampler,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
+        drop_last=True,
+    )
+    return _CyclicDataIterator(dataloader, sampler=sampler)
 
 
 def build_train_valid_test_data_iterators(train_valid_test_dataset_provider):
@@ -234,13 +281,17 @@ def build_train_valid_test_data_iterators(train_valid_test_dataset_provider):
         if os.path.exists(test_path):
             test_ds = np.memmap(test_path, dtype=token_dtype, mode="r")
 
+    train_ds = _as_token_block_dataset(train_ds)
+    valid_ds = _as_token_block_dataset(valid_ds)
+    test_ds = _as_token_block_dataset(test_ds)
+
     args.do_train = train_ds is not None
     args.do_valid = valid_ds is not None
     args.do_test = test_ds is not None
 
-    train_data_iterator = _TokenDataIterator(train_ds) if train_ds is not None else None
-    valid_data_iterator = _TokenDataIterator(valid_ds) if valid_ds is not None else None
-    test_data_iterator = _TokenDataIterator(test_ds) if test_ds is not None else None
+    train_data_iterator = _build_data_iterator(train_ds, shuffle=True)
+    valid_data_iterator = _build_data_iterator(valid_ds, shuffle=False)
+    test_data_iterator = _build_data_iterator(test_ds, shuffle=False)
 
     return train_data_iterator, valid_data_iterator, test_data_iterator
 
