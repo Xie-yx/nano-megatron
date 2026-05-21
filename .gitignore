@@ -18,7 +18,6 @@ out/
 *.log
 
 # Prepared dataset artifacts
-*.bin
 *.pt
 
 # Downloaded raw local datasets
