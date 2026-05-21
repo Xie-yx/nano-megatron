@@ -203,18 +203,32 @@ def build_train_valid_test_data_iterators(train_valid_test_dataset_provider):
             )
         train_ds, valid_ds, test_ds = datasets
 
+    def resolve_data_file(filename):
+        data_dir = args.data_dir
+        candidate = os.path.join(data_dir, filename)
+        if os.path.exists(candidate):
+            return candidate
+
+        if not os.path.isabs(data_dir):
+            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            candidate = os.path.join(repo_root, data_dir, filename)
+            if os.path.exists(candidate):
+                return candidate
+
+        return os.path.join(data_dir, filename)
+
     if train_ds is None:
-        train_path = os.path.join(args.data_dir, "train.bin")
+        train_path = resolve_data_file("train.bin")
         if os.path.exists(train_path):
             train_ds = np.memmap(train_path, dtype=token_dtype, mode="r")
 
     if valid_ds is None:
-        valid_path = os.path.join(args.data_dir, "val.bin")
+        valid_path = resolve_data_file("val.bin")
         if os.path.exists(valid_path):
             valid_ds = np.memmap(valid_path, dtype=token_dtype, mode="r")
 
     if test_ds is None:
-        test_path = os.path.join(args.data_dir, "test.bin")
+        test_path = resolve_data_file("test.bin")
         if os.path.exists(test_path):
             test_ds = np.memmap(test_path, dtype=token_dtype, mode="r")
 
@@ -291,7 +305,10 @@ def train(
     args = get_args()
 
     if train_data_iterator is None:
-        raise RuntimeError("train_data_iterator is None; no training data was built.")
+        raise RuntimeError(
+            "train_data_iterator is None; no training data was built. "
+            f"Check --data-dir={args.data_dir!r} from cwd={os.getcwd()!r}."
+        )
 
     for model_module in model:
         model_module.train()
