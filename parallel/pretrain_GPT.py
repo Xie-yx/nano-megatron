@@ -3,6 +3,7 @@ import torch
 
 from parallel.global_vars import get_args
 from parallel.model.GPT_model import ParallelGPT
+from parallel import mpu
 from parallel.training import pretrain
 
 
@@ -19,6 +20,15 @@ def _build_causal_mask(batch_size, seq_length, device):
     return mask.view(1, 1, seq_length, seq_length).expand(
         batch_size, 1, seq_length, seq_length
     )
+
+
+def _build_data_parallel_generator():
+    args = get_args()
+    generator = torch.Generator(device="cpu")
+    iteration = getattr(args, "iteration", 0)
+    seed = args.seed + iteration * args.data_parallel_size + mpu.get_dp_rank()
+    generator.manual_seed(seed)
+    return generator
 
 
 def get_batch(data_iterator):
@@ -38,6 +48,7 @@ def get_batch(data_iterator):
         0,
         len(tokens) - sample_length + 1,
         (args.micro_batch_size,),
+        generator=_build_data_parallel_generator(),
     )
     samples = [
         torch.from_numpy(np.asarray(tokens[start : start + sample_length], dtype=np.int64))
