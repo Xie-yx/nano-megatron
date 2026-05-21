@@ -25,3 +25,6 @@ from .layers import ColumnParallelLinear
 from .layers import RowParallelLinear
 from .layers import VocabParallelEmbedding
 from .layers import set_defaults_if_not_set_tensor_model_parallel_attributes
+
+from .cross_entropy import _VocabParallelCrossEntropy
+from .cross_entropy import vocab_parallel_cross_entropy

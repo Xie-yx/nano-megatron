@@ -29,6 +29,7 @@ class ParallelGPT(nn.Module):
         input_ids,
         position_ids,
         attention_mask,
+        labels = None,
         forward_method_parallel_output = None,
     ):
         lm_output = self.language_model(
@@ -46,8 +47,11 @@ class ParallelGPT(nn.Module):
             self.language_model.embedding.word_embeddings.weight,
             parallel_output
         )
-
-        return output
+        if labels is None:
+            return output
+        else:
+            loss = mpu.vocab_parallel_cross_entropy(output.float(), labels)
+            return loss
         
         
         

@@ -1,8 +1,5 @@
-from functools import partial
-
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from parallel.global_vars import get_args
 from parallel.model.GPT_model import ParallelGPT
@@ -10,7 +7,7 @@ from parallel.training import pretrain
 
 
 def model_provider(pre_process=True, post_process=True):
-    return ParallelGPT(parallel_output=False)
+    return ParallelGPT(parallel_output=True)
 
 
 def train_valid_test_dataset_provider():
@@ -63,11 +60,8 @@ def get_batch(data_iterator):
     return input_ids, labels, position_ids, attention_mask
 
 
-def loss_func(labels, output_tensor):
-    loss = F.cross_entropy(
-        output_tensor.view(-1, output_tensor.size(-1)),
-        labels.view(-1),
-    )
+def loss_func(output_tensor):
+    loss = output_tensor.float().mean()
     return loss, {"lm loss": loss.detach()}
 
 
@@ -77,9 +71,10 @@ def forward_step(data_iterator, model):
         input_ids,
         position_ids,
         attention_mask,
-        forward_method_parallel_output=False,
+        labels=labels,
+        forward_method_parallel_output=True,
     )
-    return output_tensor, partial(loss_func, labels)
+    return output_tensor, loss_func
 
 
 if __name__ == "__main__":
