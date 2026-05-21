@@ -4,6 +4,10 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
 
 from .initialize import initialize_megatron
 
@@ -314,6 +318,15 @@ def train(
         model_module.train()
 
     iteration = getattr(args, "iteration", 0)
+    is_log_rank = torch.distributed.get_rank() == 0
+    progress = None
+    if is_log_rank and tqdm is not None:
+        progress = tqdm(
+            total=args.max_steps,
+            initial=iteration,
+            desc="training",
+            dynamic_ncols=True,
+        )
 
     while iteration < args.max_steps:
         loss_dict = train_step(
@@ -327,15 +340,28 @@ def train(
         iteration += 1
         args.iteration = iteration
 
-        if torch.distributed.get_rank() == 0 and iteration % args.log_interval == 0:
+        if is_log_rank:
             lr = optimizer.param_groups[0]["lr"]
-            loss_items = []
+            loss_values = {}
             for name, value in loss_dict.items():
                 if torch.is_tensor(value):
                     value = value.detach().float().item()
-                loss_items.append(f"{name}: {value:.6f}")
-            loss_text = " | ".join(loss_items)
-            print(f"iteration {iteration} | lr: {lr:.6e} | {loss_text}", flush=True)
+                loss_values[name] = value
+
+            if progress is not None:
+                progress.update(1)
+                if iteration % args.log_interval == 0:
+                    progress.set_postfix(
+                        {"lr": f"{lr:.3e}", **{k: f"{v:.4f}" for k, v in loss_values.items()}}
+                    )
+            elif iteration % args.log_interval == 0:
+                loss_text = " | ".join(
+                    f"{name}: {value:.6f}" for name, value in loss_values.items()
+                )
+                print(f"iteration {iteration} | lr: {lr:.6e} | {loss_text}", flush=True)
+
+    if progress is not None:
+        progress.close()
 
     return iteration
 
