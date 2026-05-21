@@ -13,6 +13,7 @@
 - ParallelGPT
 - TP 训练闭环
 - TP+DP 最小训练路径
+- DP rank 感知的数据采样
 
 ## 目录结构
 
@@ -22,7 +23,7 @@ nano-megatron/
   parallel/
     arguments.py            # Megatron 风格参数系统
     initialize.py           # 分布式与模型并行初始化
-    training.py             # 简化版 Megatron 训练骨架
+    training.py             # 简化版 CodeGeeX/Megatron 训练骨架
     pretrain_GPT.py         # GPT 预训练入口
     data/                   # tiny Shakespeare 数据准备
     model/                  # ParallelGPT 模型实现
@@ -158,9 +159,13 @@ tensor_model_parallel_size = 2
 data_parallel_size = 2
 ```
 
-当前 DP 通过 PyTorch DDP 接入 `data_parallel_group`。后续如果要进一步完善 DP 语义，建议补充：
+当前 DP 通过 PyTorch DDP 接入 `data_parallel_group`。数据采样已经做了 DP rank 感知：
 
-- DP rank 感知的数据采样
+- 同一个 TP group 内的 rank 使用相同 batch
+- 不同 DP rank 使用不同 batch
+
+后续如果要进一步完善 DP 语义，建议补充：
+
 - DP 组内 loss 平均日志
 - TP/DP checkpoint 保存与恢复
 
@@ -198,6 +203,14 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun \
   --tensor-model-parallel-size 2
 ```
 
+常用排查命令：
+
+```bash
+ss -lntp | grep <open_port>
+timeout 5 nc -vz <node0_ip> <open_port>
+```
+
+如果 `nc` 超时，问题在网络/防火墙/端口策略，不在模型代码。
 
 ## 当前状态
 
@@ -212,10 +225,10 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun \
 - vocab-parallel cross entropy
 - TP 训练闭环
 - TP+DP smoke 路径
+- DP rank 感知数据采样
 
 后续可继续完善：
 
-- DP rank 不同 batch 采样
 - DP loss 平均日志
 - checkpoint 保存与恢复
 - 多机网络环境下的实际训练验证

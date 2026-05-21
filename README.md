@@ -10,6 +10,7 @@ The current parallel implementation supports:
 - `VocabParallelEmbedding`
 - Vocab-parallel cross entropy
 - `ParallelGPT` training with TP, plus a minimal TP+DP path through PyTorch DDP
+- DP-rank-aware batch sampling for TP+DP training
 
 Multi-node training is not enabled by default in the examples because the test servers currently restrict non-SSH TCP ports. The code is structured for `torchrun` multi-node launch once the cluster network allows the rendezvous port and NCCL communication.
 
@@ -141,7 +142,7 @@ tensor_model_parallel_size = 2
 data_parallel_size = 2
 ```
 
-The current DP path uses PyTorch DDP over the data-parallel group. A stricter DP implementation should still add DP-rank-aware sampling and DP-averaged logging.
+The current DP path uses PyTorch DDP over the data-parallel group. Batch sampling is DP-rank-aware: ranks in the same TP group see the same batch, while different DP ranks sample different batches. A stricter DP implementation should still add DP-averaged logging and TP/DP checkpointing.
 
 ## Multi-Node Notes
 
