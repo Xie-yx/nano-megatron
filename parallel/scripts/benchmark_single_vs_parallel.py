@@ -169,8 +169,8 @@ def summarize_csv(csv_path: Path, warmup_steps: int) -> dict[str, float]:
     }
 
 
-def _common_model_args(args: argparse.Namespace) -> list[str]:
-    return [
+def _common_model_args(args: argparse.Namespace, include_hidden_dropout: bool) -> list[str]:
+    common = [
         "--max-steps",
         str(args.max_steps),
         "--log-interval",
@@ -197,9 +197,10 @@ def _common_model_args(args: argparse.Namespace) -> list[str]:
         "0.0",
         "--residual-dropout",
         "0.0",
-        "--hidden-dropout",
-        "0.0",
     ]
+    if include_hidden_dropout:
+        common.extend(["--hidden-dropout", "0.0"])
+    return common
 
 
 def _parse_csv_ints(raw: str) -> list[int]:
@@ -231,7 +232,7 @@ def _parallel_case_name(nproc: int, tp: int, dp: int) -> str:
     return f"n{nproc}_tp{tp}_dp{dp}"
 
 
-def _run_single(args: argparse.Namespace, run_root: Path, common_args: list[str]) -> dict[str, Any]:
+def _run_single(args: argparse.Namespace, run_root: Path, single_common_args: list[str]) -> dict[str, Any]:
     single_out = run_root / "single"
     single_csv = single_out / "loss_log.csv"
 
@@ -246,7 +247,7 @@ def _run_single(args: argparse.Namespace, run_root: Path, common_args: list[str]
         "loss_log.csv",
         "--batch-size",
         str(args.batch_size),
-    ] + common_args
+    ] + single_common_args
 
     single_env = os.environ.copy()
     single_env["CUDA_VISIBLE_DEVICES"] = args.single_gpu
@@ -310,7 +311,7 @@ def _build_sweep_cases(args: argparse.Namespace) -> list[dict[str, int]]:
 def _run_parallel_case(
     args: argparse.Namespace,
     run_root: Path,
-    common_args: list[str],
+    parallel_common_args: list[str],
     nproc: int,
     tp: int,
     micro_batch: int,
@@ -339,7 +340,7 @@ def _run_parallel_case(
         "loss_log.csv",
         "--micro-batch-size",
         str(micro_batch),
-    ] + common_args
+    ] + parallel_common_args
 
     parallel_env = os.environ.copy()
     parallel_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_gpu_ids)
@@ -417,17 +418,18 @@ def main() -> None:
     run_name = args.run_name or datetime.now().strftime("%Y%m%d_%H%M%S")
     run_root = REPO_ROOT / "benchmark" / "runs" / run_name
 
-    common_args = _common_model_args(args)
+    single_common_args = _common_model_args(args, include_hidden_dropout=False)
+    parallel_common_args = _common_model_args(args, include_hidden_dropout=True)
 
     all_rows: list[dict[str, Any]] = []
-    single_row = _run_single(args, run_root, common_args)
+    single_row = _run_single(args, run_root, single_common_args)
     all_rows.append(single_row)
 
     if args.mode == "pair":
         pair_row = _run_parallel_case(
             args,
             run_root,
-            common_args,
+            parallel_common_args,
             nproc=args.nproc_per_node,
             tp=args.tensor_model_parallel_size,
             micro_batch=args.micro_batch_size,
@@ -446,7 +448,7 @@ def main() -> None:
             row = _run_parallel_case(
                 args,
                 run_root,
-                common_args,
+                parallel_common_args,
                 nproc=case["nproc"],
                 tp=case["tp"],
                 micro_batch=case["micro_batch"],
